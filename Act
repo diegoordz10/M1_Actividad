@@ -1,0 +1,129 @@
+#!pip install mesa
+from mesa import Agent, Model
+from mesa.space import MultiGrid
+from mesa.time import SimultaneousActivation
+from mesa.datacollection import DataCollector
+
+%matplotlib inline
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+plt.rcParams["animation.html"] = "jshtml"
+matplotlib.rcParams['animation.embed_limit'] = 2**128
+
+
+import numpy as np
+import pandas as pd
+
+
+import time
+import datetime
+
+def get_grid(model):
+    grid = np.zeros((model.grid.width, model.grid.height))
+    for cell in model.grid.coord_iter():
+        cell_content, x, y = cell
+        grid[x][y] = cell_content.live
+    return grid
+
+
+class RobotLimpieza(Agent):
+  def __init__(self, unique_id, model):
+    super().__init__(unique_id, model)
+    self.estado =  None
+
+  def step(self):
+    vecinos = self.model.grid.get_neighbors(self.pos, moore = True, include_center = True)
+    for vecino in vecinos:
+      if isinstance(vecino, Celda) and self.pos == vecino.pos:
+        if vecino.sig_estado == 1:
+          vecino.sig_estado == 0
+          self.sig_pos = self.pos
+        else:
+          vecinos_2 = self.model.grid.get_neighborhood(self.pos, moore = True, include_center = False)
+          vecino.sig_estado = 0
+          self.sig_pos = self.random.choice(vecinos_2)
+        break
+
+  def advance(self):
+    vecinos = self.model.grid.get_neighbors(self.pos, moore = True, include_center = True)
+    for vecino in vecinos:
+      if isinstance(vecino, Celda) and self.pos == vecino.pos:
+        vecino.estado = vecino.sig_estado
+        break
+      self.model.grid.move_agent(self, self.sig_pos)
+
+
+
+class Celda(Agent):
+  def __init__(self, unique_id, model, estado):
+    super().__init__(unique_id, model)
+    self.estado = estado
+    self.pos(unique_id)
+    self.sig_estado = None
+
+
+class Habitacion(Model):
+  def __init__(self):
+    self.num_agentes = num_agentes
+    self.por_celdasS = por_celdasS
+    self.por_celdasL = 1 - por_celdasS
+    self.grid = MultiGrid(M, N, False)
+    self.schedule = SimultaneousActivation(self)
+
+    num_celdas_sucias = int(M * N * por_celdasS)
+
+    for (content, x, y) in self.grid.coord_iter():
+      num = random.randint(0,1)
+      if num == 1 and num_celdas_sucias > 0:
+        a = Celda((x, y), self, 1)
+        num_celdas_sucias -= 1
+      else:
+        a = Celda((x, y), self, 0)
+      
+      self.grid.place_agent(a, (x, y))
+      self.schedule.add(a)
+
+    for id in range(num_agentes):
+      r = RobotLimpieza(id, self)
+      self.grid.place_agent(r, (1, 1))
+      self.schedule.add(r)
+
+    self.datacollector = DataCollector(
+          model_reporters={"Grid": get_grid})
+
+
+  def step(self):
+    self.datacollector.collect(self)
+    self.schedule.step()
+    
+    
+M = 15
+N = 10
+
+num_agentes = 5
+por_celdasS = 0.6
+tiempoMax = 0.1
+
+model = Habitacion(M, N, num_agentes, por_celdasS)
+start_time = time.time()
+while((time.time() - start_time) < tiempoMax):
+  model.step()
+
+print("Tiempo de ejecucion: ", str(datetime.timedelta(seconds = (time.time() - start_time))))
+
+all_grid = model.datacollector.get_model_vars_dataframe()
+
+%%capture
+
+fig, axs = plt.subplots(figsize=(M,N))
+axs.set_xticks([])
+axs.set_yticks([])
+patch = plt.imshow(all_grid.iloc[0][0], cmap=plt.cm.binary)
+
+def animate(i):
+    patch.set_data(all_grid.iloc[i][0])
+    
+anim = animation.FuncAnimation(fig, animate, frames=NUM_GENERATIONS)
+
+anim
